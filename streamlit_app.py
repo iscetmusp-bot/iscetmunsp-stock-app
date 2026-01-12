@@ -52,7 +52,6 @@ def process_stock(ticker, name, mode, min_vol):
         volume_lots = hist['Volume'].iloc[-1] / 1000
         if volume_lots < min_vol: return None
         
-        # 邏輯判斷
         if mode == "強勢股" and last_close > prev_close and prev_close > hist['Close'].iloc[-3]:
             return {"代號": ticker.split('.')[0], "名稱": name, "收盤價": round(last_close, 2), "漲幅(%)": round(((last_close-prev_close)/prev_close)*100, 2), "成交量(張)": int(volume_lots)}
         
@@ -65,9 +64,8 @@ def process_stock(ticker, name, mode, min_vol):
 
 def get_broker_trading(broker_id, lookback_days=1):
     try:
-        # 自動向前追溯，確保抓到有開盤的日期
         end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=lookback_days + 3)).strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=lookback_days + 5)).strftime('%Y-%m-%d')
         
         df_broker = dl.taiwan_stock_broker_pivots(
             broker_ids=broker_id, 
@@ -78,13 +76,12 @@ def get_broker_trading(broker_id, lookback_days=1):
         if df_broker is None or df_broker.empty:
             return None
         
-        # 依照日期排序，取最後一筆有效日期
         latest_date = df_broker['date'].max()
         df_latest = df_broker[df_broker['date'] == latest_date]
         
         summary = df_latest.groupby("stock_id").agg({"buy": "sum", "sell": "sum"}).reset_index()
         summary["買超張數"] = (summary["buy"] - summary["sell"]) / 1000
-        return summary[summary["買超張數"] > 50].sort_values("買超張數", ascending=False) # 過濾小量買超
+        return summary[summary["買超張數"] > 50].sort_values("買超張數", ascending=False)
     except: return None
 
 # --- 2. UI 介面設計 ---
@@ -108,11 +105,39 @@ with tab1:
             with ThreadPoolExecutor(max_workers=20) as executor:
                 futures = [executor.submit(process_stock, t, n, mode, min_vol) for t, n in stock_map.items()]
                 results = [f.result() for f in futures if f.result()]
-        if results: st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
-        else: st.warning("今日無符合標的")
+        if results: 
+            st.dataframe(pd.DataFrame(results), hide_index=True, use_container_width=True)
+        else: 
+            st.warning("今日無符合標的")
 
 with tab2:
     st.subheader("💎 主力券商分點追蹤")
+    # 修正後的字典清單，確保引號與括號完整
     broker_dict = {
-        "9268 凱基-台北": "9268", "9264 凱基-松山": "9264", "1470 摩根斯坦利": "1470", 
-        "8440 摩根大通": "8440", "1560 美商高盛": "1560", "9800 元大-
+        "9268 凱基-台北": "9268", 
+        "9264 凱基-松山": "9264", 
+        "1470 摩根斯坦利": "1470", 
+        "8440 摩根大通": "8440", 
+        "1560 美商高盛": "1560", 
+        "9800 元大-總公司": "9800",
+        "700E 富邦-建國": "700E", 
+        "5850 國票-敦北法人": "5850", 
+        "7006 元大-土城永寧": "7006"
+    }
+    selected_name = st.selectbox("選擇要追蹤的隔日沖券商：", list(broker_dict.keys()))
+    
+    if st.button("🔍 執行：特定券商買超掃描", use_container_width=True):
+        with st.spinner(f'讀取 {selected_name} 數據中...'):
+            broker_id = broker_dict[selected_name]
+            broker_data = get_broker_trading(broker_id)
+            if broker_data is not None and not broker_data.empty:
+                sm = get_tw_stock_map()
+                broker_data['名稱'] = broker_data['stock_id'].apply(lambda x: sm.get(x+".TW", sm.get(x+".TWO", "未知")))
+                st.success(f"✅ 已抓取 {selected_name} 最新成交日買超數據")
+                st.dataframe(broker_data[['stock_id', '名稱', '買超張數']].rename(columns={'stock_id':'代號'}), hide_index=True, use_container_width=True)
+            else: 
+                st.error("⚠️ 查無數據。可能是該日無大型進出或非開盤日。")
+
+with tab3:
+    st.write("1. 技術面：選取強勢或剛突破標的。")
+    st.write("2. 籌碼面：追蹤知名隔日沖大戶 買超清單。")
