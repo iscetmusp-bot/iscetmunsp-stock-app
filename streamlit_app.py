@@ -11,22 +11,30 @@ st.write("邏輯：1.成交量>1000張 2.漲幅前20名 3.連續上漲第二天"
 # --- 1. 自動獲取全台股代碼清單 ---
 @st.cache_data # 增加快取，避免重複抓取浪費時間
 def get_tw_stock_list():
-    # 抓取上市清單
+    # 模擬瀏覽器的 Header，避免被證交所阻擋
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    
     url_twse = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
-    # 抓取上櫃清單
     url_tpex = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
     
     stocks = []
     for url, suffix in [(url_twse, ".TW"), (url_tpex, ".TWO")]:
-        res = requests.get(url)
-        df = pd.read_html(res.text)[0]
-        df.columns = df.iloc[0]
-        df = df.iloc[2:]
-        df['code'] = df['有價證券代號及名稱'].str.split('　').str[0]
-        # 篩選 4 位數的普通股
-        code_list = df[df['code'].str.len() == 4]['code'].tolist()
-        stocks.extend([s + suffix for s in code_list])
-    
+        try:
+            # 加入 verify=False 跳過 SSL 驗證，並加上 headers
+            res = requests.get(url, headers=headers, verify=False)
+            # 使用 pandas 讀取網頁表格
+            df = pd.read_html(res.text)[0]
+            df.columns = df.iloc[0]
+            df = df.iloc[2:]
+            df['code'] = df['有價證券代號及名稱'].str.split('　').str[0]
+            # 篩選 4 位數的普通股代碼
+            code_list = df[df['code'].str.len() == 4]['code'].tolist()
+            stocks.extend([s + suffix for s in code_list])
+        except Exception as e:
+            st.error(f"抓取清單時發生錯誤 ({suffix}): {e}")
+            
     return stocks
 
 # --- 2. 核心篩選邏輯 ---
