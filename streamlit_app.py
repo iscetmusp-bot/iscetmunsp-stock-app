@@ -41,23 +41,40 @@ def get_tw_stock_map():
 def process_stock(ticker, name):
     try:
         stock = yf.Ticker(ticker)
-        hist = stock.history(period="5d")
-        if len(hist) < 3: return None
+        # 為了計算 60MA (季線)，我們抓取 100 天的資料
+        hist = stock.history(period="100d")
+        if len(hist) < 65: return None
+        
+        # 計算 60日移動平均線 (季線)
+        hist['MA60'] = hist['Close'].rolling(window=60).mean()
         
         last_close = hist['Close'].iloc[-1]
         prev_close = hist['Close'].iloc[-2]
         prev2_close = hist['Close'].iloc[-3]
+        
+        last_ma60 = hist['MA60'].iloc[-1]
+        prev_ma60 = hist['MA60'].iloc[-2]
+        
         volume_lots = hist['Volume'].iloc[-1] / 1000
         change_pct = ((last_close - prev_close) / prev_close) * 100
         
-        # 你的三個原始邏輯
-        if volume_lots > 1000 and last_close > prev_close and prev_close > prev2_close:
+        # --- 篩選邏輯 ---
+        # 1. 基本量能：成交量 > 1000張
+        cond_vol = volume_lots > 1000
+        # 2. 強勢：連兩日漲
+        cond_strong = last_close > prev_close and prev_close > prev2_close
+        # 3. 關鍵突破：今天收盤 > 季線 且 昨天收盤 <= 季線 (代表剛突破)
+        # 或者你也可以選「站穩季線」：last_close > last_ma60
+        cond_breakout = last_close > last_ma60 and prev_close <= prev_ma60
+        
+        if cond_vol and cond_strong and cond_breakout:
             return {
                 "代號": ticker.split('.')[0],
                 "名稱": name,
                 "收盤價": round(last_close, 2),
                 "漲幅(%)": round(change_pct, 2),
-                "成交量(張)": int(volume_lots)
+                "成交量(張)": int(volume_lots),
+                "季線位置": round(last_ma60, 2)
             }
     except:
         return None
