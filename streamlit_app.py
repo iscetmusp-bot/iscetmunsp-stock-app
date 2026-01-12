@@ -78,10 +78,11 @@ if st.button('執行全市場掃描'):
                 res = future.result()
                 if res: results.append(res)
     
-    if results:
-        # 邏輯 1：取前 20 名
+   if results:
+        # 排序並取前 20 名
         df = pd.DataFrame(results).sort_values(by="漲幅(%)", ascending=False).head(20)
+        
         st.success(f"掃描完成！符合條件共 {len(results)} 檔，以下顯示漲幅前 20 名：")
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("查無符合條件之股票。")
+        
+        # 使用 hide_index=True 隱藏最左邊那欄數字
+        st.dataframe(df, use_container_width=True, hide_index=True)
