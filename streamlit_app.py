@@ -2,91 +2,86 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
+from concurrent.futures import ThreadPoolExecutor
+import urllib3
 
-st.set_page_config(page_title="台股每日強勢股篩選", layout="wide")
+# 關閉不安全連線的警告訊息（因為我們使用了 verify=False）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-st.title("📈 台股全自動篩選器")
-st.write("邏輯：1.成交量>1000張 2.漲幅前20名 3.連續上漲第二天")
+st.set_page_config(page_title="台股強勢股篩選器", layout="wide")
+st.title("🚀 台股全自動篩選器 (含股票名稱)")
 
-# --- 1. 自動獲取全台股代碼清單 ---
-@st.cache_data # 增加快取，避免重複抓取浪費時間
-def get_tw_stock_list():
-    # 模擬瀏覽器的 Header，避免被證交所阻擋
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
+# --- 1. 修改清單抓取邏輯：建立 {代號: 名稱} 對照表 ---
+@st.cache_data(ttl=3600)
+def get_tw_stock_map():
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    urls = [
+        ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW"), # 上市
+        ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO") # 上櫃
+    ]
     
-    url_twse = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=2"
-    url_tpex = "https://isin.twse.com.tw/isin/C_public.jsp?strMode=4"
-    
-    stocks = []
-    for url, suffix in [(url_twse, ".TW"), (url_tpex, ".TWO")]:
+    stock_map = {}
+    for url, suffix in urls:
         try:
-            # 加入 verify=False 跳過 SSL 驗證，並加上 headers
             res = requests.get(url, headers=headers, verify=False)
-            # 使用 pandas 讀取網頁表格
             df = pd.read_html(res.text)[0]
             df.columns = df.iloc[0]
             df = df.iloc[2:]
-            df['code'] = df['有價證券代號及名稱'].str.split('　').str[0]
-            # 篩選 4 位數的普通股代碼
-            code_list = df[df['code'].str.len() == 4]['code'].tolist()
-            stocks.extend([s + suffix for s in code_list])
+            
+            for val in df['有價證券代號及名稱']:
+                if '　' in str(val):
+                    code, name = str(val).split('　')
+                    if len(code) == 4: # 只取四位數普通股
+                        stock_map[code + suffix] = name
         except Exception as e:
-            st.error(f"抓取清單時發生錯誤 ({suffix}): {e}")
-            
-    return stocks
+            st.error(f"抓取清單失敗: {e}")
+    return stock_map
 
-# --- 2. 核心篩選邏輯 ---
-def fast_filter(stock_list):
+# --- 2. 修改處理邏輯：帶入名稱 ---
+def process_stock(ticker, name):
+    try:
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period="5d")
+        if len(hist) < 3: return None
+        
+        last_close = hist['Close'].iloc[-1]
+        prev_close = hist['Close'].iloc[-2]
+        prev2_close = hist['Close'].iloc[-3]
+        volume_lots = hist['Volume'].iloc[-1] / 1000
+        change_pct = ((last_close - prev_close) / prev_close) * 100
+        
+        # 你的三個原始邏輯
+        if volume_lots > 1000 and last_close > prev_close and prev_close > prev2_close:
+            return {
+                "代號": ticker.split('.')[0],
+                "名稱": name,
+                "收盤價": round(last_close, 2),
+                "漲幅(%)": round(change_pct, 2),
+                "成交量(張)": int(volume_lots)
+            }
+    except:
+        return None
+    return None
+
+# --- 3. 主程式執行 ---
+if st.button('執行全市場掃描'):
+    stock_map = get_tw_stock_map()
+    all_tickers = list(stock_map.keys())
     results = []
-    progress_bar = st.progress(0)
-    total = len(stock_list)
     
-    # 為了示範速度，我們取前 100 檔跑測試，若要全跑請移除 [:100]
-    # 注意：全跑需要一段時間，yfinance 有流量限制
-    test_list = stock_list[:100] 
+    with st.spinner(f'正在分析 {len(all_tickers)} 檔上市櫃股票...'):
+        # 使用 ThreadPoolExecutor 同時處理
+        with ThreadPoolExecutor(max_workers=15) as executor:
+            # 傳遞 (代號, 名稱) 給處理函數
+            futures = [executor.submit(process_stock, t, stock_map[t]) for t in all_tickers]
+            for future in futures:
+                res = future.result()
+                if res: results.append(res)
     
-    for i, ticker in enumerate(test_list):
-        try:
-            stock = yf.Ticker(ticker)
-            # 抓取 5 天資料
-            hist = stock.history(period="5d")
-            if len(hist) < 3: continue
-            
-            # 數據準備
-            last_close = hist['Close'].iloc[-1]
-            prev_close = hist['Close'].iloc[-2]
-            prev2_close = hist['Close'].iloc[-3]
-            volume_shares = hist['Volume'].iloc[-1]
-            volume_lots = volume_shares / 1000  # 換算成張
-            change_pct = ((last_close - prev_close) / prev_close) * 100
-            
-            # 判斷邏輯
-            # 條件：成交量 > 1000張 且 連續兩天收盤價上漲
-            if volume_lots > 1000 and last_close > prev_close and prev_close > prev2_close:
-                results.append({
-                    "代號": ticker,
-                    "收盤價": round(last_close, 2),
-                    "漲幅(%)": round(change_pct, 2),
-                    "成交量(張)": int(volume_lots)
-                })
-        except:
-            continue
-        progress_bar.progress((i + 1) / len(test_list))
-        
-    return pd.DataFrame(results)
-
-# --- 3. 介面按鈕 ---
-if st.button('開始全市場掃描 (測試前100檔)'):
-    with st.spinner('正在獲取最新清單並計算中...'):
-        all_stocks = get_tw_stock_list()
-        final_df = fast_filter(all_stocks)
-        
-        if not final_df.empty:
-            # 漲幅前 20 名
-            top_20 = final_df.sort_values(by="漲幅(%)", ascending=False).head(20)
-            st.success(f"掃描完成！符合條件共 {len(final_df)} 檔")
-            st.table(top_20)
-        else:
-            st.warning("目前範圍內無符合條件股票（可能今日尚未開盤或量能不足）")
+    if results:
+        # 邏輯 1：取前 20 名
+        df = pd.DataFrame(results).sort_values(by="漲幅(%)", ascending=False).head(20)
+        st.success(f"掃描完成！符合條件共 {len(results)} 檔，以下顯示漲幅前 20 名：")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("查無符合條件之股票。")
