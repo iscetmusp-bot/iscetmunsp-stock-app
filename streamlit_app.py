@@ -5,21 +5,25 @@ import requests
 from concurrent.futures import ThreadPoolExecutor
 import urllib3
 
-# 關閉不安全連線的警告訊息（因為我們使用了 verify=False）
+# 1. 基本設定與安全性修正
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+st.set_page_config(page_title="台股全能選股助手", layout="wide")
 
-st.set_page_config(page_title="台股強勢股篩選器", layout="wide")
-st.title("🚀 台股全自動篩選器 (含股票名稱)")
+# 自定義 CSS 讓表格更好看
+st.markdown("""
+    <style>
+    .main { background-color: #f5f7f9; }
+    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# --- 1. 修改清單抓取邏輯：建立 {代號: 名稱} 對照表 ---
+# --- 核心功能函數 ---
+
 @st.cache_data(ttl=3600)
 def get_tw_stock_map():
     headers = {'User-Agent': 'Mozilla/5.0'}
-    urls = [
-        ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW"), # 上市
-        ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO") # 上櫃
-    ]
-    
+    urls = [("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", ".TW"), 
+            ("https://isin.twse.com.tw/isin/C_public.jsp?strMode=4", ".TWO")]
     stock_map = {}
     for url, suffix in urls:
         try:
@@ -27,76 +31,115 @@ def get_tw_stock_map():
             df = pd.read_html(res.text)[0]
             df.columns = df.iloc[0]
             df = df.iloc[2:]
-            
             for val in df['有價證券代號及名稱']:
                 if '　' in str(val):
                     code, name = str(val).split('　')
-                    if len(code) == 4: # 只取四位數普通股
-                        stock_map[code + suffix] = name
-        except Exception as e:
-            st.error(f"抓取清單失敗: {e}")
+                    if len(code) == 4: stock_map[code + suffix] = name
+        except: pass
     return stock_map
 
-# --- 2. 修改處理邏輯：帶入名稱 ---
-def process_stock(ticker, name):
+def process_stock(ticker, name, mode, min_vol):
     try:
         stock = yf.Ticker(ticker)
-        # 為了計算 60MA (季線)，我們抓取 100 天的資料
+        # 為了計算季線，抓取 100 天資料
         hist = stock.history(period="100d")
         if len(hist) < 65: return None
-        
-        # 計算 60日移動平均線 (季線)
-        hist['MA60'] = hist['Close'].rolling(window=60).mean()
         
         last_close = hist['Close'].iloc[-1]
         prev_close = hist['Close'].iloc[-2]
         prev2_close = hist['Close'].iloc[-3]
+        volume_lots = hist['Volume'].iloc[-1] / 1000
         
+        # 基本過濾：成交量
+        if volume_lots < min_vol: return None
+        
+        # 邏輯 A：強勢連漲
+        cond_strong = last_close > prev_close and prev_close > prev2_close
+        
+        # 邏輯 B：突破季線 (MA60)
+        hist['MA60'] = hist['Close'].rolling(window=60).mean()
         last_ma60 = hist['MA60'].iloc[-1]
         prev_ma60 = hist['MA60'].iloc[-2]
+        cond_ma60 = last_close > last_ma60 and prev_close <= prev_ma60
         
-        volume_lots = hist['Volume'].iloc[-1] / 1000
-        change_pct = ((last_close - prev_close) / prev_close) * 100
-        
-        # --- 篩選邏輯 ---
-        # 1. 基本量能：成交量 > 1000張
-        cond_vol = volume_lots > 1000
-        # 2. 強勢：連兩日漲
-        cond_strong = last_close > prev_close and prev_close > prev2_close
-        # 3. 關鍵突破：今天收盤 > 季線 且 昨天收盤 <= 季線 (代表剛突破)
-        # 或者你也可以選「站穩季線」：last_close > last_ma60
-        cond_breakout = last_close > last_ma60 and prev_close <= prev_ma60
-        
-        if cond_vol and cond_strong and cond_breakout:
-            return {
-                "代號": ticker.split('.')[0],
-                "名稱": name,
-                "收盤價": round(last_close, 2),
-                "漲幅(%)": round(change_pct, 2),
-                "成交量(張)": int(volume_lots),
-                "季線位置": round(last_ma60, 2)
-            }
-    except:
-        return None
+        res_data = {
+            "代號": ticker.split('.')[0], "名稱": name, 
+            "收盤價": round(last_close, 2), "漲幅(%)": round(((last_close-prev_close)/prev_close)*100, 2),
+            "成交量(張)": int(volume_lots)
+        }
+
+        if mode == "強勢股" and cond_strong: return res_data
+        if mode == "突破季線" and cond_ma60: 
+            res_data["季線位置"] = round(last_ma60, 2)
+            return res_data
+    except: return None
     return None
 
-# --- 3. 主程式執行 ---
-if st.button('執行全市場掃描'):
-    stock_map = get_tw_stock_map()
-    all_tickers = list(stock_map.keys())
-    results = []
+# --- UI 介面設計 ---
+
+# 側邊欄
+with st.sidebar:
+    st.title("🛡️ 參數控制面板")
+    st.divider()
+    min_vol = st.slider("最低成交量門檻 (張)", 500, 5000, 1000, step=100)
+    st.info("調整上方數值後，再點擊右側分頁中的按鈕執行掃描。")
+    st.write("---")
+    st.caption("數據來源: Yahoo Finance / TWSE")
+
+# 主畫面分頁
+tab1, tab2, tab3 = st.tabs(["📈 技術面選股", "💎 籌碼面/券商追蹤", "📋 使用說明"])
+
+with tab1:
+    st.subheader("技術分析條件篩選")
+    col1, col2 = st.columns(2)
     
-    with st.spinner(f'正在分析 {len(all_tickers)} 檔上市櫃股票...'):
-        with ThreadPoolExecutor(max_workers=15) as executor:
-            futures = [executor.submit(process_stock, t, stock_map[t]) for t in all_tickers]
-            for future in futures:
-                res = future.result()
-                if res: results.append(res)
+    with col1:
+        if st.button("🔥 執行：強勢連漲股"):
+            stock_map = get_tw_stock_map()
+            results = []
+            with st.spinner('掃描全台股中...'):
+                with ThreadPoolExecutor(max_workers=15) as executor:
+                    futures = [executor.submit(process_stock, t, n, "強勢股", min_vol) for t, n in stock_map.items()]
+                    results = [f.result() for f in futures if f.result()]
+            if results:
+                st.dataframe(pd.DataFrame(results).sort_values("漲幅(%)", ascending=False), hide_index=True, use_container_width=True)
+            else: st.warning("今日無符合標的")
+
+    with col2:
+        if st.button("🚀 執行：突破季線股"):
+            stock_map = get_tw_stock_map()
+            results = []
+            with st.spinner('計算季線位置中...'):
+                with ThreadPoolExecutor(max_workers=15) as executor:
+                    futures = [executor.submit(process_stock, t, n, "突破季線", min_vol) for t, n in stock_map.items()]
+                    results = [f.result() for f in futures if f.result()]
+            if results:
+                st.dataframe(pd.DataFrame(results).sort_values("漲幅(%)", ascending=False), hide_index=True, use_container_width=True)
+            else: st.warning("今日無符合標的")
+
+with tab2:
+    st.subheader("主力籌碼與分點追蹤")
+    st.info("此功能正在串接資料來源，目前可先行設定參數。")
     
-    # 這裡的 if 必須與上面的「with st.spinner」最左邊對齊
-    if results:
-        df = pd.DataFrame(results).sort_values(by="漲幅(%)", ascending=False).head(20)
-        st.success(f"掃描完成！符合條件共 {len(results)} 檔，以下顯示漲幅前 20 名：")
-        st.dataframe(df, use_container_width=True, hide_index=True) # 這裡也順便幫你加上了隱藏索引
-    else:
-        st.warning("查無符合條件之股票。")
+    c1, c2 = st.columns(2)
+    with c1:
+        broker_name = st.text_input("輸入追蹤券商 (如: 凱基-台北)", "")
+    with c2:
+        buy_days = st.number_input("連續買超天數", 1, 10, 3)
+    
+    if st.button("🔍 執行：特定券商進出掃描 (測試中)"):
+        if not broker_name:
+            st.error("請先輸入券商名稱")
+        else:
+            st.write(f"正在模擬查詢 {broker_name} 的交易數據...")
+            st.warning("提醒：此功能需串接 FinMind API，請確認已在 requirements.txt 加入 FinMind。")
+
+with tab3:
+    st.markdown("""
+    ### 介面說明
+    1. **側邊欄**：統一設定篩選的「基本量能」，避免選到流動性不足的殭屍股。
+    2. **技術面分頁**：
+        * **強勢連漲**：收盤價連續兩天上升。
+        * **突破季線**：當日收盤價由下往上穿過 60MA，代表趨勢轉強。
+    3. **籌碼面分頁**：未來將加入特定券商(分點)的買賣超數據對齊。
+    """)
