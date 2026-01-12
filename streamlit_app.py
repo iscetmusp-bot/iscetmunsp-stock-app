@@ -77,8 +77,19 @@ with st.sidebar:
 tab1, tab2, tab3 = st.tabs(["📈 技術面選股", "💎 籌碼面/券商追蹤", "📋 使用說明"])
 
 with tab1:
-    # (此處保留原本的技術面按鈕邏輯...)
-    st.info("請點擊下方按鈕執行技術掃描")
+    st.subheader("📈 技術面篩選")
+    
+    # 使用 container 包起來
+    with st.container():
+        btn_strong = st.button("🔥 執行：強勢連漲股", use_container_width=True)
+        btn_ma60 = st.button("🚀 執行：突破季線股", use_container_width=True)
+        
+    if btn_strong:
+        # 執行強勢股邏輯...
+        pass
+    if btn_ma60:
+        # 執行季線邏輯...
+        pass
 
 with tab2:
     st.subheader("主力券商分點追蹤")
