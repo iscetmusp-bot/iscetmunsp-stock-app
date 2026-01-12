@@ -12,8 +12,8 @@ st.set_page_config(page_title="台股全能選股助手", layout="wide")
 
 # 你的 FinMind Token
 FINMIND_TOKEN = "EyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMiAxODowNTozOSIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjEwMS44LjI1LjIyOCJ9.Y507vFfYtj4EJnz6Qc8N2w47HiDDsoA_5ArA_HqPGU4"
-dl = DataLoader()
-dl.login_token(FINMIND_TOKEN)
+dl = 
+DataLoader(token=FINMIND_TOKEN)
 
 # --- 核心功能函數 ---
 
@@ -39,21 +39,30 @@ def get_tw_stock_map():
 # 新增：抓取特定券商買超邏輯
 def get_broker_trading(broker_name, days=3):
     try:
-        # 取得最近幾天的交易日
+        # 確保日期格式正確
+        start_date = (pd.Timestamp.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
+        
         df_broker = dl.taiwan_stock_broker_pivots(
             broker_ids=broker_name, 
-            start_date=(pd.Timestamp.now() - pd.Timedelta(days=days)).strftime('%Y-%m-%d')
+            start_date=start_date
         )
-        if df_broker.empty: return None
         
-        # 加總期間內的買賣超 (買入張數 - 賣出張數)
+        # 檢查資料是否為空或包含錯誤訊息
+        if df_broker is None or df_broker.empty:
+            return None
+        
+        # 加總期間內的買賣超
         summary = df_broker.groupby("stock_id").agg({
             "buy": "sum",
             "sell": "sum"
         }).reset_index()
+        
+        # 計算買超張數（FinMind 單位通常是股，所以除以 1000）
         summary["買超張數"] = (summary["buy"] - summary["sell"]) / 1000
+        # 只顯示買超大於 0 的標的
         return summary[summary["買超張數"] > 0].sort_values("買超張數", ascending=False)
-    except:
+    except Exception as e:
+        st.error(f"FinMind API 呼叫失敗: {e}")
         return None
 
 # ... (其餘原本的 process_stock 函數保持不變) ...
