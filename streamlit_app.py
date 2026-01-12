@@ -87,19 +87,16 @@ if st.button('執行全市場掃描'):
     results = []
     
     with st.spinner(f'正在分析 {len(all_tickers)} 檔上市櫃股票...'):
-        # 使用 ThreadPoolExecutor 同時處理
         with ThreadPoolExecutor(max_workers=15) as executor:
-            # 傳遞 (代號, 名稱) 給處理函數
             futures = [executor.submit(process_stock, t, stock_map[t]) for t in all_tickers]
             for future in futures:
                 res = future.result()
                 if res: results.append(res)
     
-   if results:
-        # 排序並取前 20 名
+    # 這裡的 if 必須與上面的「with st.spinner」最左邊對齊
+    if results:
         df = pd.DataFrame(results).sort_values(by="漲幅(%)", ascending=False).head(20)
-        
         st.success(f"掃描完成！符合條件共 {len(results)} 檔，以下顯示漲幅前 20 名：")
-        
-        # 使用 hide_index=True 隱藏最左邊那欄數字
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True, hide_index=True) # 這裡也順便幫你加上了隱藏索引
+    else:
+        st.warning("查無符合條件之股票。")
