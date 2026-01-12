@@ -89,4 +89,9 @@ with tab2:
                 # 合併股票名稱
                 broker_data['名稱'] = broker_data['stock_id'].apply(lambda x: stock_map.get(x+".TW", stock_map.get(x+".TWO", "未知")))
                 st.success(f"找到 {broker_input} 近 {lookback} 天買超標的：")
-                st.dataframe(broker_data[['stock_id', '
+                st.dataframe(broker_data[['stock_id', '名稱', '買超張數']], hide_index=True, use_container_width=True)
+            else:
+                st.warning("查無該券商資料，請確認券商代碼是否正確。")
+
+with tab3:
+    st.markdown("### 說明：券商代碼查詢可至證交所官網查詢（如 9268 為凱基台北）。")
