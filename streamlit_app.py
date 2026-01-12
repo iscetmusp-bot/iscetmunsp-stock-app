@@ -10,10 +10,11 @@ from FinMind.data import DataLoader
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="台股全能選股助手", layout="wide")
 
-# 你的 FinMind Token
+# 正確寫法：Token 是一整行長字串，前後引號對齊
 FINMIND_TOKEN = "EyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMiAxODowNTozOSIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjEwMS44LjI1LjIyOCJ9.Y507vFfYtj4EJnz6Qc8N2w47HiDDsoA_5ArA_HqPGU4"
-dl = 
-DataLoader(token=FINMIND_TOKEN)
+
+# 緊接著這行
+dl = DataLoader(token=FINMIND_TOKEN)
 
 # --- 核心功能函數 ---
 
