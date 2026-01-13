@@ -1,12 +1,16 @@
 import streamlit as st
 import pandas as pd
 import requests
+import urllib3
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="台股籌碼觀察站 (免 Token 版)", layout="wide")
+# 禁用安全警示（因為我們使用了 verify=False）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def get_twse_institutional_investors(target_date):
-    """直接從證交所官網抓取三大法人買賣超彙總"""
+st.set_page_config(page_title="台股籌碼觀察站 (官方直連版)", layout="wide")
+
+def get_twse_data(target_date):
+    """直接從證交所抓取法人彙總，加入 SSL 忽略設定"""
     date_str = target_date.strftime("%Y%m%d")
     url = f"https://www.twse.com.tw/zh/api/trading/fund/BFI82U?date={date_str}&response=json"
     
@@ -15,43 +19,42 @@ def get_twse_institutional_investors(target_date):
     }
     
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        # 重點：verify=False 解決 image_10c56e.png 遇到的 SSL 錯誤
+        res = requests.get(url, headers=headers, timeout=15, verify=False)
         data = res.json()
         
         if data.get("stat") == "OK":
-            # 整理成 DataFrame
             df = pd.DataFrame(data["data"], columns=data["fields"])
             return df, data["title"]
         else:
-            return None, "當日非交易日或資料尚未更新"
+            return None, f"證交所回應：{data.get('stat', '無資料')}"
     except Exception as e:
-        return None, f"連線失敗: {str(e)}"
+        return None, f"連線異常: {str(e)}"
 
-# --- 介面設計 ---
-st.title("🛡️ 台股籌碼觀察站 (官方直接連線)")
-st.info("本頁面數據直接連線『台灣證券交易所』，不需 FinMind Token，無積分限制。")
+# --- UI 介面 ---
+st.title("🛡️ 台股籌碼觀察站 (官方直連穩定版)")
 
-# 選擇日期 (預設昨天，因為今天可能還沒收盤)
+# 選擇日期：台股資料通常下午三點後才齊全
 query_date = st.date_input("選擇查詢日期", datetime.now() - timedelta(days=1))
 
 if st.button("🚀 抓取官方法人數據", use_container_width=True):
-    with st.spinner('正在從證交所下載資料...'):
-        df, msg = get_twse_institutional_investors(query_date)
+    with st.spinner('正在排除 SSL 障礙並下載資料...'):
+        df, msg = get_twse_data(query_date)
         
         if df is not None:
-            st.success(f"✅ {msg}")
+            st.success(f"✅ 獲取成功！{msg}")
             
-            # 美化表格
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            # 數值清理：移除逗號並轉為數字
+            for col in df.columns[1:]:
+                df[col] = df[col].str.replace(',', '').astype(float)
             
-            # 簡單分析
-            st.write("### 💡 快速解讀")
-            # 假設最後一欄是買賣差額
-            total_diff = df.iloc[-1, -1]
-            st.metric("市場總買賣超差額", total_diff)
+            st.dataframe(df.style.format(precision=0), use_container_width=True)
+            
+            # 視覺化看板
+            st.subheader("📊 市場資金流向總結")
+            net_value = df.iloc[-1, -1] / 100000000 # 轉為億元
+            st.metric("市場總買賣超 (億元)", f"{net_value:.2f}")
         else:
-            st.error(f"❌ 無法讀取：{msg}")
-            st.warning("提示：台股收盤資料通常在 15:00 後更新，週六日不開盤。")
-
-st.divider()
-st.caption("數據來源：臺灣證券交易所 (TWSE) 公開資料查詢系統")
+            st.error(f"❌ 讀取失敗")
+            st.warning(f"診斷訊息：{msg}")
+            st.info("💡 建議：若查詢今日無資料，請嘗試前一個工作日。")
