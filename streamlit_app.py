@@ -6,25 +6,29 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="台股籌碼觀察站 (中繼穩定版)", layout="wide")
 
 # 請替換為您在第一步獲得的 Google GAS 網址
-GAS_URL = "https://script.google.com/macros/u/0/s/AKfycbw-qSK9CP2znSKYLU-6CbsCBM_FjyUFaEIKkoJe1tYyuEN8nJs2WQR5VRkvnpGxK9x71w/exec" 
+GAS_URL = "https://script.google.com/macros/s/AKfycbxiHbL-sJDLSYb-pw_-U8TlploreSWHyr5Cjt4iplI-kXzlqEYLrdKI66FWAYJlB6XJ/exec" 
 
 def get_data_via_gas(target_date):
     date_str = target_date.strftime("%Y%m%d")
-    # 確保網址結尾沒有斜線，並正確帶入參數
+    # 確保網址結尾沒有斜線
     api_url = f"{GAS_URL}?date={date_str}"
     
+    # 使用完全模擬一般瀏覽器的 Headers
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,application/json,*/*;q=0.8",
+        "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Cache-Control": "no-cache"
     }
     
     try:
-        # allow_redirects=True 非常重要，因為 GAS 會進行多次轉址
-        res = requests.get(api_url, headers=headers, timeout=25, allow_redirects=True)
+        # 使用 Session 來自動處理 Google 的轉址與 Cookie
+        session = requests.Session()
+        res = session.get(api_url, headers=headers, timeout=30, allow_redirects=True)
         
-        # 檢查回傳內容是否為空
-        if not res.text or len(res.text.strip()) == 0:
-            return None, "中繼站回傳空白內容"
+        # 診斷：如果還是拿到 HTML，顯示前 100 字幫助判斷是哪種網頁
+        if res.text.lstrip().startswith("<!DOCTYPE html>"):
+            return None, f"解析失敗：拿到 Google 登入或錯誤網頁。前100字：{res.text[:100]}"
             
         data = res.json()
         
@@ -34,10 +38,8 @@ def get_data_via_gas(target_date):
         else:
             return None, f"證交所訊息：{data.get('stat')}"
             
-    except requests.exceptions.JSONDecodeError:
-        return None, f"解析失敗，回傳內容並非 JSON。原始內容前 50 字：{res.text[:50]}"
     except Exception as e:
-        return None, f"連線異常: {str(e)}"
+        return None, f"系統連線異常: {str(e)}"
 
 st.title("🛡️ 台股籌碼觀察站 (Google 中繼強化版)")
 st.info("透過 Google Cloud 代理請求，解決證交所阻擋雲端 IP 的問題。")
