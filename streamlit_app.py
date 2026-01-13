@@ -3,44 +3,53 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="台股籌碼觀察站 (穩定版)", layout="wide")
+# --- 基礎設定 ---
+st.set_page_config(page_title="台股籌碼穿透版", layout="wide")
 
-# ⚠️ 請確保此網址是在 GAS「管理部署」中，由「最新版本」生成的 URL
-# 且網址內絕對不可包含 /u/0/
-GAS_URL = "https://script.google.com/macros/s/AKfycbwP58H9_tNzYX2SgIPgj1SqFUu1iQzRraHaq0Hta3XZg5s59fVTA-srruNkX8ZBhrlGpA/exec"
+# ⚠️ 請在此處貼上您剛剛產生的「全新 ID」網址
+GAS_URL = "https://script.google.com/macros/s/AKfycbxxpquBQIW4Zd_C-Mtw3C7F0OXRMGF2zasOzqBw9mDyrUzSwDVxSsA18zMklRMsbaLdbg/exec"
 
-def get_data(target_date):
+def fetch_twse_data(target_date):
     date_str = target_date.strftime("%Y%m%d")
-    # 手動加上一個隨機參數，強制 Google 不要使用快取網頁
-    api_url = f"{GAS_URL}?date={date_str}&nocache={datetime.now().timestamp()}"
+    # 網址加上隨機數，強迫 Google 重新抓取
+    api_url = f"{GAS_URL}?date={date_str}&t={datetime.now().timestamp()}"
     
     try:
-        # 改用最直接的 requests.get，並強制 allow_redirects
-        res = requests.get(api_url, timeout=30, allow_redirects=True)
+        # allow_redirects=True 處理 Google 轉址
+        # timeout=30 避免連線逾時
+        response = requests.get(api_url, timeout=30, allow_redirects=True)
         
-        # 這是您目前卡關的地方，我們印出前 100 字來診斷
-        if res.text.strip().startswith("<!DOCTYPE html>"):
-            return None, "診斷訊息：GAS 仍回傳 HTML 登入網頁。請嘗試在 GAS『管理部署』中刪除舊部署，重新建立一個全新的部署。"
+        # 診斷：若拿到 HTML
+        if response.text.strip().startswith("<!DOCTYPE html>"):
+            return None, "錯誤：Google 仍攔截此連線。請確認 GAS 部署時『誰可以存取』已設為『所有人』。"
         
-        data = res.json()
-        if data.get("stat") == "OK":
-            df = pd.DataFrame(data["data"], columns=data["fields"])
-            return df, data["title"]
-        return None, f"證交所訊息：{data.get('stat')}"
+        json_data = response.json()
+        if json_data.get("stat") == "OK":
+            df = pd.DataFrame(json_data["data"], columns=json_data["fields"])
+            return df, json_data["title"]
+        else:
+            return None, f"證交所訊息：{json_data.get('stat')}"
+            
     except Exception as e:
-        return None, f"發生錯誤：{str(e)}"
+        return None, f"系統異常：{str(e)}"
 
-# --- 介面設計 ---
-st.title("🛡️ 台股籌碼觀察站")
-query_date = st.date_input("🗓️ 選擇查詢日期", value=datetime(2026, 1, 12))
+# --- 使用者介面 ---
+st.title("📊 三大法人買賣超彙總 (官方同步版)")
 
-if st.button("🚀 執行抓取"):
-    df, msg = get_data(query_date)
-    if df is not None:
-        st.success(msg)
-        # 資料清洗
-        for col in df.columns[1:]:
-            df[col] = df[col].astype(str).str.replace(',', '').astype(float)
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.error(msg)
+# 預設查詢昨日
+default_date = datetime(2026, 1, 12)
+query_date = st.date_input("🗓️ 選擇查詢日期", value=default_date)
+
+if st.button("🚀 取得數據", use_container_width=True):
+    with st.spinner('連線中...'):
+        df, msg = fetch_twse_data(query_date)
+        
+        if df is not None:
+            st.success(f"✅ {msg}")
+            # 資料清理
+            for col in df.columns[1:]:
+                df[col] = df[col].astype(str).str.replace(',', '').astype(float)
+            st.dataframe(df.style.format(precision=0), use_container_width=True, hide_index=True)
+        else:
+            st.error(msg)
+            st.warning("提示：若為假日或今日下午三點前，官方將不會提供數據。")
