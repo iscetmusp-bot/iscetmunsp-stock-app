@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 st.set_page_config(page_title="台股籌碼觀察站 (中繼穩定版)", layout="wide")
 
 # 請替換為您在第一步獲得的 Google GAS 網址
-GAS_URL = "https://script.google.com/macros/s/AKfycbw-qSK9CP2znSKYLU-6CbsCBM_FjyUFaEIKkoJe1tYyuEN8nJs2WQR5VRkvnpGxK9x71exec" 
+GAS_URL = "https://script.google.com/macros/s/AKfycbw-qSK9CP2znSKYLU-6CbsCBM_FjyUFaEIKkoJe1tYyuEN8nJs2WQR5VRkvnpGxK9x71w/exec" 
 
 def get_data_via_gas(target_date):
     date_str = target_date.strftime("%Y%m%d")
