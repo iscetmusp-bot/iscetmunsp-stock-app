@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="台股籌碼觀察站 (終極穿透版)", layout="wide")
 
-# ⚠️ 請在此處替換為您「重新部署」後產生的新網址 (不含 /u/0/)
+# ⚠️ 請在此處替換為您在「步驟一」獲得的全新網址 (確認不含 /u/0/)
 GAS_URL = "https://script.google.com/macros/s/AKfycbyrA6vV0Tpfal6dO8djllNkv-m60d_UgAs2O88U_pJMgFepacESS90LbLmLiuC7cPmE6w/exec"
 
 def get_data_via_gas(target_date):
@@ -18,18 +18,17 @@ def get_data_via_gas(target_date):
     }
     
     try:
-        # 在函數內建立 Session，避免 NameError 作用域錯誤
+        # 在函數內建立 session，避免 NameError
         with requests.Session() as session:
-            # allow_redirects=True 確保能跟隨 Google 的轉址
+            # allow_redirects=True 確保能正確處理 Google 的身分跳轉
             res = session.get(api_url, headers=headers, timeout=30, allow_redirects=True)
             
-            # 診斷：若拿到 HTML 則代表 GAS 權限設定不對
+            # 診斷：若拿到 HTML 代表 GAS 部署設定仍不對
             if res.text.strip().startswith("<!DOCTYPE html>"):
                 return None, "拿到 Google 登入網頁，請確認 GAS 部署為『所有人』存取。"
             
             data = res.json()
             if data.get("stat") == "OK":
-                # 建立資料表
                 df = pd.DataFrame(data["data"], columns=data["fields"])
                 return df, data["title"]
             return None, f"證交所訊息：{data.get('stat')}"
@@ -37,24 +36,21 @@ def get_data_via_gas(target_date):
     except Exception as e:
         return None, f"連線異常: {str(e)}"
 
-# --- 使用者介面 ---
+# --- UI 介面 ---
 st.title("🛡️ 台股籌碼觀察站 (終極穿透版)")
 st.caption("透過 Google Cloud 代理請求，完美解決證交所封鎖雲端 IP 的問題。")
 
 query_date = st.date_input("🗓️ 選擇查詢日期", value=datetime.now() - timedelta(days=1))
 
 if st.button("🚀 執行官方數據抓取", use_container_width=True):
-    with st.spinner('正在與 Google 伺服器同步數據...'):
+    with st.spinner('正在同步數據...'):
         df, msg = get_data_via_gas(query_date)
         
         if df is not None:
             st.success(f"✅ 成功獲取：{msg}")
-            
-            # 數據清理：將字串中的逗號移除並轉為數字
+            # 資料清洗
             for col in df.columns[1:]:
                 df[col] = df[col].astype(str).str.replace(',', '').astype(float)
-            
-            # 顯示表格
             st.dataframe(df.style.format(precision=0), use_container_width=True, hide_index=True)
         else:
             st.error(f"❌ 抓取失敗")
