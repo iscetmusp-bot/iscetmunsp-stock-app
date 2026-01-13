@@ -5,8 +5,13 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="台股籌碼觀察站 (中繼穩定版)", layout="wide")
 
-# 請替換為您在第一步獲得的 Google GAS 網址
-GAS_URL = "https://script.google.com/macros/u/0/s/AKfycbyqOzrATutY66IyMesDkqGPWnGOGwdxSlE_gJnZBXSvLp-GI50UNk_kMJhkICxDp4J19w/exec" 
+# 1. 第 9 行使用不帶 /u/0/ 的新網址
+GAS_URL = "https://script.google.com/macros/s/AKfycbyqOzrATutY66IyMesDkqGPWnGOGwdxSlE_gJnZBXSvLp-GI50UNk_kMJhkICxDp4J19w/exec" 
+
+# 2. 修改 requests 連線那一行 (第 15 行左右)
+# 加入 allow_redirects=True 並使用 Session
+session = requests.Session()
+res = session.get(api_url, headers=headers, timeout=30, allow_redirects=True)
 
 def get_data_via_gas(target_date):
     date_str = target_date.strftime("%Y%m%d")
