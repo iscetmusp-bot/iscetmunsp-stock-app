@@ -1,51 +1,95 @@
 import streamlit as st
 import pandas as pd
-import io
 import requests
-from datetime import datetime
+import re
+import io
 
-st.set_page_config(page_title="台股籌碼觀測站 (直接連線版)", layout="wide")
+# ==========================================
+# 核心數據提取類別 (GitHub 風格)
+# ==========================================
+class MoneyDJScraper:
+    def __init__(self):
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://moneydj.emega.com.tw/"
+        }
 
-def get_data_direct(target_date):
-    date_str = target_date.strftime("%Y%m%d")
-    # 改用 CSV 下載網址，這與 JSON 接口的路徑不同，有機會繞過阻擋
-    url = f"https://www.twse.com.tw/zh/trading/fund/BFI82U/download?queryDate={date_str}&type=csv"
+    def _clean_label(self, text):
+        """處理 GenLink2stk 亂碼標籤"""
+        match = re.search(r"','(.+?)'\);", str(text))
+        return match.group(1) if match else text
+
+    def get_broker_data(self, broker_id, date_obj, mode="金額"):
+        d_str = f"{date_obj.year}-{date_obj.month}-{date_obj.day}"
+        e_val = "1" if mode == "張數" else "0"
+        url = f"https://moneydj.emega.com.tw/z/zg/zgb/zgb0.djhtm?a={broker_id}&b={broker_id}&c={d_str}&d={d_str}&e={e_val}"
+        
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=15)
+            resp.encoding = 'big5'
+            # 提取原始數據
+            pattern = r"GenLink2stk\('.+?','(.+?)'\);.*?<td.*?>(.*?)</td>.*?<td.*?>(.*?)</td>.*?<td.*?>(.*?)</td>"
+            matches = re.findall(pattern, resp.text, re.DOTALL)
+            
+            if not matches: return None
+            
+            results = []
+            for m in matches:
+                results.append({
+                    "股票名稱": m[0],
+                    "買進": float(m[1].replace(',', '')),
+                    "賣出": float(m[2].replace(',', '')),
+                    "差額": float(m[3].replace(',', ''))
+                })
+            return pd.DataFrame(results)
+        except:
+            return None
+
+# ==========================================
+# Streamlit 介面層
+# ==========================================
+st.set_page_config(page_title="MoneyDJ Pro 監控", layout="wide")
+st.title("🚀 MoneyDJ 分點進出 (GitHub 專業版)")
+
+# 初始化爬蟲
+scraper = MoneyDJScraper()
+
+# 隔日沖與核心清單
+BROKER_LIST = {
+    "9200 凱基-台北 (隔日沖)": "9200",
+    "984e 元大-土城永寧 (隔日沖)": "984e",
+    "1520 凱基-松山 (主力)": "1520",
+    "1470 台灣美林 (外資)": "1470",
+    "1440 摩根大通 (外資)": "1440",
+    "1020 合庫-總社": "1020"
+}
+
+with st.sidebar:
+    st.header("⚙️ 設定參數")
+    sel_broker = st.selectbox("選擇分點", options=list(BROKER_LIST.keys()))
+    manual_id = st.text_input("手動輸入代號 (選填)", placeholder="例如: 1024")
+    target_date = st.date_input("查詢日期", value=pd.to_datetime("2026-01-08"))
+    data_mode = st.radio("數據模式", ["金額", "張數"])
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+    final_id = manual_id if manual_id else BROKER_LIST[sel_broker]
 
-    try:
-        response = requests.get(url, headers=headers, timeout=20)
+if st.button("🔥 啟動數據追蹤", use_container_width=True):
+    df = scraper.get_broker_data(final_id, target_date, data_mode)
+    
+    if df is not None and not df.empty:
+        st.success(f"成功解析分點 {final_id} 數據")
         
-        # 如果還是被擋（回傳 HTML），這行會抓到
-        if "<html>" in response.text:
-            return None, "連線被證交所拒絕 (IP 封鎖)。"
-
-        # 使用 io.StringIO 將字串轉為檔案格式供 pandas 讀取
-        # 證交所 CSV 通常從第 2 行開始才是資料
-        df = pd.read_csv(io.StringIO(response.text), skiprows=1)
-        
-        # 清理資料：移除全空的欄位或合計列
-        df = df.dropna(subset=['單位名稱'])
-        return df, f"{date_str} 三大法人買賣超"
-        
-    except Exception as e:
-        return None, f"抓取失敗: {str(e)}"
-
-# --- UI 介面 ---
-st.title("📈 台股籌碼觀察站 (CSV 直接連線)")
-
-# 測試時請手動選取 2026/01/12
-query_date = st.date_input("選擇查詢日期", value=datetime(2026, 1, 12))
-
-if st.button("執行抓取", use_container_width=True):
-    with st.spinner('嘗試直接連線證交所 CSV 伺服器...'):
-        df, msg = get_data_direct(query_date)
-        
-        if df is not None:
-            st.success(msg)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        else:
-            st.error(msg)
-            st.info("目前的雲端 IP 可能已被證交所暫時列入黑名單。")
+        # 視覺化摘要
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("📈 買超前五名")
+            st.dataframe(df.nlargest(5, '差額'), hide_index=True)
+        with col2:
+            st.subheader("📉 賣超前五名")
+            st.dataframe(df.nsmallest(5, '差額'), hide_index=True)
+            
+        st.divider()
+        st.subheader("📋 完整明細")
+        st.dataframe(df.sort_values('差額', ascending=False), use_container_width=True)
+    else:
+        st.error("查無紀錄，請檢查日期或分點代號。")
