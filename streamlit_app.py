@@ -1,28 +1,28 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import requests
 import urllib3
 from datetime import datetime, timedelta
 
-# --- 0. 基礎環境設定 ---
+# --- 0. 基本設定 ---
+# 停用安全檢查警告（針對某些環境的相容性）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-st.set_page_config(page_title="台股全能選股助手", layout="wide")
+st.set_page_config(page_title="台股籌碼觀察站", layout="wide")
 
-# 更新 Token (請確保這串字元完整且無空格)
+# 已填入您提供的最新 Token
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMyAxMDo0NzozMyIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjYwLjI0OS4xMzYuMzcifQ.AyKn8RjaIoDUU9iPCiM9mF-EV5b8Kmn4qqkzvCSKPZ4"
 
-# --- 1. 核心數據處理函數 ---
+# --- 1. 核心數據處理 ---
 
 def get_broker_data_final(broker_id):
     """
-    使用 HTTP 直接請求，解決 Token 異常與套件報錯問題
+    使用 HTTP 直接請求 FinMind API，確保 100% 避開套件版本衝突
     """
     try:
-        # 自動搜尋過去 10 天內最新的資料
         api_url = "https://api.finmindtrade.com/api/v4/data"
+        # 搜尋範圍設定為 20 天，確保能抓到最近一個有開盤交易的數據
         end_date = datetime.now().strftime('%Y-%m-%d')
-        start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
+        start_date = (datetime.now() - timedelta(days=20)).strftime('%Y-%m-%d')
         
         params = {
             "dataset": "TaiwanStockBrokerPivots",
@@ -32,40 +32,42 @@ def get_broker_data_final(broker_id):
             "token": FINMIND_TOKEN
         }
         
-        res = requests.get(api_url, params=params, timeout=10)
+        res = requests.get(api_url, params=params, timeout=15)
         data_json = res.json()
         
+        # 檢查 API 回傳狀態
         if data_json.get("msg") != "success":
-            return None, f"API 錯誤: {data_json.get('msg')}"
+            return None, f"API 回應異常：{data_json.get('msg')}"
         
-        raw_data = data_json.get("data", [])
-        if not raw_data:
-            return None, "此券商在過去 10 天內無買賣紀錄。"
+        raw_list = data_json.get("data", [])
+        if not raw_list:
+            return None, "此券商在搜尋區間內查無交易紀錄，請確認券商代號或稍後再試。"
             
-        df = pd.DataFrame(raw_data)
+        df = pd.DataFrame(raw_list)
         df['date'] = pd.to_datetime(df['date'])
         
-        # 取得最後一個有資料的日期
+        # 鎖定該券商「最近一個有交易的日期」
         latest_date = df['date'].max()
         df_latest = df[df['date'] == latest_date].copy()
         
-        # 轉換數值並計算買超 (張)
+        # 數值清理與買超計算
         df_latest['buy'] = pd.to_numeric(df_latest['buy'], errors='coerce').fillna(0)
         df_latest['sell'] = pd.to_numeric(df_latest['sell'], errors='coerce').fillna(0)
         df_latest['買超張數'] = (df_latest['buy'] - df_latest['sell']) / 1000
         
-        # 只要有買就顯示 (買超 > 0)
-        result = df_latest[df_latest['買超張數'] > 0].sort_values("買超張數", ascending=False)
+        # 排除買賣超合計為 0 的股票，並按買超張數降序排列
+        result = df_latest[df_latest['買超張數'] != 0].sort_values("買超張數", ascending=False)
         return result, latest_date.strftime('%Y-%m-%d')
+        
     except Exception as e:
-        return None, f"連線異常: {str(e)}"
+        return None, f"連線異常：{str(e)}"
 
 @st.cache_data(ttl=3600)
 def get_stock_name_map():
-    """抓取證交所代碼對照表"""
+    """抓取台股名稱對照表"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        res = requests.get("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", headers=headers, verify=False)
+        # 抓取上市股票清單
+        res = requests.get("https://isin.twse.com.tw/isin/C_public.jsp?strMode=2", timeout=10)
         df = pd.read_html(res.text)[0]
         df.columns = df.iloc[0]
         df = df.iloc[2:]
@@ -78,50 +80,54 @@ def get_stock_name_map():
     except:
         return {}
 
-# --- 2. 介面呈現 ---
+# --- 2. 使用者介面 ---
 
 st.title("🛡️ 台股籌碼觀察站")
+st.caption("即時連線 FinMind API 資料庫")
+st.divider()
 
-tab1, tab2 = st.tabs(["💎 知名分點追蹤", "📋 使用說明"])
+# 定義熱門指標券商
+broker_dict = {
+    "9268 凱基-台北": "9268",
+    "9264 凱基-松山": "9264",
+    "1470 摩根斯坦利": "1470",
+    "8440 摩根大通": "8440",
+    "1560 美商高盛": "1560",
+    "9800 元大-總公司": "9800",
+    "700E 富邦-建國": "700E"
+}
 
-with tab1:
-    broker_dict = {
-        "9268 凱基-台北": "9268",
-        "9264 凱基-松山": "9264",
-        "1470 摩根斯坦利": "1470",
-        "8440 摩根大通": "8440",
-        "1560 美商高盛": "1560",
-        "9800 元大-總公司": "9800"
-    }
-    
-    target = st.selectbox("請選擇券商分點：", list(broker_dict.keys()))
-    
-    if st.button("🔍 執行數據掃描", use_container_width=True):
-        bid = broker_dict[target]
-        with st.spinner('連線資料庫中...'):
-            data, info = get_broker_data_final(bid)
+# 讓使用者選擇券商
+selected_label = st.selectbox("🎯 請選擇要追蹤的指標分點：", list(broker_dict.keys()))
+
+if st.button("🚀 開始數據掃描", use_container_width=True):
+    bid = broker_dict[selected_label]
+    with st.spinner(f'正在調閱 {selected_label} 的進出明細...'):
+        data, info = get_broker_data_final(bid)
+        
+        if data is not None:
+            st.success(f"✅ 抓取成功！最新交易日期：{info}")
             
-            if data is not None and not data.empty:
-                st.success(f"✅ 成功！資料日期：{info}")
-                
-                # 匹配名稱
-                names = get_stock_name_map()
-                data['股票名稱'] = data['stock_id'].apply(lambda x: names.get(x, "未知"))
-                
-                # 顯示結果
-                st.dataframe(
-                    data[['stock_id', '股票名稱', '買超張數']].rename(columns={'stock_id':'代號'}),
-                    hide_index=True,
-                    use_container_width=True
-                )
-            else:
-                st.error(f"❌ 掃描失敗")
-                st.info(f"詳細訊息：{info}")
+            # 匹配股票名稱
+            names = get_stock_name_map()
+            data['股票名稱'] = data['stock_id'].apply(lambda x: names.get(str(x), "未知"))
+            
+            # 整理輸出表格
+            final_df = data[['stock_id', '股票名稱', '買超張數']].copy()
+            final_df.columns = ['代號', '股票名稱', '買超(張)']
+            
+            # 呈現表格並美化數值
+            st.dataframe(
+                final_df.style.format({"買超(張)": "{:,.1f}"}),
+                hide_index=True,
+                use_container_width=True
+            )
+            
+            # 提供 CSV 下載
+            csv = final_df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("📥 下載此報表", csv, f"{selected_label}_{info}.csv", "text/csv")
+        else:
+            st.error("❌ 無法載入數據")
+            st.warning(f"診斷報告：{info}")
 
-with tab2:
-    st.markdown("""
-    ### 📌 功能說明
-    * **即時連線**：直接對接 FinMind API，獲取交易所每日買賣日報。
-    * **自動回溯**：若今日數據尚未產出，系統會自動搜尋最近一個交易日。
-    * **數據定義**：買超張數 = (總買入股數 - 總賣出股數) / 1000。
-    """)
+st.info("💡 提醒：今日分點成交數據通常在 17:30 之後才會由交易所產出，若現在查無資料，系統會自動顯示前一交易日的數據。")
