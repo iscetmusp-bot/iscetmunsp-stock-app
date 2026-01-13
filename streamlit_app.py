@@ -1,81 +1,60 @@
 import streamlit as st
-import pandas as pd
 import requests
+import pandas as pd
 from datetime import datetime, timedelta
 
-# --- 0. 基礎設定 ---
-st.set_page_config(page_title="台股籌碼觀察站 (穩定法人版)", layout="wide")
+st.set_page_config(page_title="API 權限終極診斷", layout="wide")
 
-# 您提供的有效 Token
-FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMyAxMDo0NzozMyIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjYwLjI0OS4xMzYuMzcifQ.AyKn8RjaIoDUU9iPCiM9mF-EV5b8Kmn4qqkzvCSKPZ4"
+# 您最新的 Token
+TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMyAxMDo0NzozMyIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjYwLjI0OS4xMzYuMzcifQ.AyKn8RjaIoDUU9iPCiM9mF-EV5b8Kmn4qqkzvCSKPZ4"
 
-def get_institutional_data(stock_id):
-    """
-    抓取三大法人買賣超，避開分點資料的 422 權限限制
-    """
+st.title("🧪 API 權限深度診斷工具")
+st.write("本工具將測試您的 Token 實際可存取的資料層級。")
+
+def test_api_permission(dataset, data_id):
     url = "https://api.finmindtrade.com/api/v4/data"
-    
-    # 搜尋最近 10 天
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
-    
     params = {
-        "dataset": "InstitutionalInvestorsBuySell",
-        "data_id": str(stock_id),
-        "start_date": start_date,
-        "end_date": end_date,
-        "token": FINMIND_TOKEN
+        "dataset": dataset,
+        "data_id": data_id,
+        "start_date": (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d'),
+        "token": TOKEN
     }
-
     try:
-        res = requests.get(url, params=params, timeout=15)
-        if res.status_code != 200:
-            return None, f"連線錯誤: {res.status_code}"
-            
-        data = res.json().get("data", [])
-        if not data:
-            return None, "查無此標的近期法人資料。"
-            
-        df = pd.DataFrame(data)
-        df['date'] = pd.to_datetime(df['date'])
-        
-        # 整理數據：將不同法人的買賣超彙整
-        latest_date = df['date'].max()
-        df_latest = df[df['date'] == latest_date].copy()
-        
-        return df_latest, latest_date.strftime('%Y-%m-%d')
-        
+        res = requests.get(url, params=params, timeout=10)
+        return res.status_code, res.json()
     except Exception as e:
-        return None, f"異常: {str(e)}"
+        return 999, str(e)
 
-# --- 1. 使用者介面 ---
+if st.button("🔍 開始權限檢測 (測試三種資料層級)"):
+    
+    # 層級 1: 基礎資料 (門檻最低)
+    st.subheader("層級 1：基礎股價 (TaiwanStockPrice)")
+    code1, res1 = test_api_permission("TaiwanStockPrice", "2330")
+    if code1 == 200 and res1.get("data"):
+        st.success("✅ 基礎權限：正常")
+    else:
+        st.error(f"❌ 基礎權限失敗：HTTP {code1}")
+        st.json(res1)
 
-st.title("🛡️ 台股籌碼觀察站 (法人動態版)")
-st.info("由於分點資料權限受限 (422)，本版改由追蹤『三大法人』資金流向。")
+    # 層級 2: 法人籌碼 (中等門檻)
+    st.subheader("層級 2：法人動態 (InstitutionalInvestorsBuySell)")
+    code2, res2 = test_api_permission("InstitutionalInvestorsBuySell", "2330")
+    if code2 == 200 and res2.get("data"):
+        st.success("✅ 法人權限：正常")
+    else:
+        st.warning(f"⚠️ 法人權限受限：HTTP {code2}")
+        st.write("原因：您的帳號積分可能不足，或 Token 需重新產生。")
 
-# 提供熱門標的供測試
-test_stocks = {
-    "2330 台積電": "2330",
-    "2317 鴻海": "2317",
-    "2454 聯發科": "2454",
-    "2603 長榮": "2603"
-}
+    # 層級 3: 分點資料 (最高門檻)
+    st.subheader("層級 3：分點明細 (TaiwanStockBrokerPivots)")
+    code3, res3 = test_api_permission("TaiwanStockBrokerPivots", "9268")
+    if code3 == 200 and res3.get("data"):
+        st.success("✅ 分點權限：正常")
+    else:
+        st.error(f"🚫 分點權限拒絕：HTTP {code3}")
+        st.write("這就是導致您先前 422 錯誤的主因。")
 
-target_stock = st.selectbox("🎯 選擇追蹤標的：", list(test_stocks.keys()))
-
-if st.button("🚀 開始掃描籌碼", use_container_width=True):
-    with st.spinner('連線伺服器中...'):
-        result, info = get_institutional_data(test_stocks[target_stock])
-        
-        if result is not None:
-            st.success(f"✅ 讀取成功！資料日期：{info}")
-            
-            # 整理輸出表格
-            final_df = result[['name', 'buy', 'sell']].copy()
-            final_df['買超(張)'] = (pd.to_numeric(final_df['buy']) - pd.to_numeric(final_df['sell'])) / 1000
-            
-            st.table(final_df[['name', '買超(張)']].rename(columns={'name':'法人名稱'}))
-        else:
-            st.error("❌ 讀取失敗")
-            st.warning(f"診斷訊息：{info}")
-            st.info("💡 建議：若仍出現錯誤，代表您的 Token 在此時段呼叫頻率已達上限。")
+st.divider()
+st.write("💡 **後續行動建議**：")
+st.write("1. 如果連『層級 1』都失敗，代表該 Token 已被伺服器封鎖，請去 FinMind 官網登出再登入，重新產生一個。")
+st.write("2. 如果只有『層級 3』失敗，代表您的帳號等級目前無法存取分點資料。")
