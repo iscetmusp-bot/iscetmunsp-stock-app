@@ -11,14 +11,21 @@ from datetime import datetime, timedelta
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 st.set_page_config(page_title="台股全能選股助手", layout="wide")
 
-# 固定使用你的 Token
+# 你的 Token
 FINMIND_TOKEN = "EyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMiAxODowNTozOSIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjEwMS44LjI1LjIyOCJ9.Y507vFfYtj4EJnz6Qc8N2w47HiDDsoA_5ArA_HqPGU4"
 
 @st.cache_resource
 def get_loader():
-    api = DataLoader()
-    api.login(token=FINMIND_TOKEN)
-    return api
+    """
+    修正：最新版 FinMind 直接在初始化時傳入 token
+    不再呼叫 .login() 或 .login_token()
+    """
+    try:
+        # 正確的初始化方式
+        return DataLoader(token=FINMIND_TOKEN)
+    except Exception as e:
+        st.error(f"FinMind 初始化失敗：{e}")
+        return DataLoader() # 回退到無 token 模式
 
 dl = get_loader()
 
