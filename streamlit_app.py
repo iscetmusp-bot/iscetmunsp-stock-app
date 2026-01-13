@@ -1,60 +1,74 @@
 import streamlit as st
-import requests
 import pandas as pd
+import requests
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="API 權限終極診斷", layout="wide")
+# --- 0. 設定 ---
+st.set_page_config(page_title="台股籌碼觀察站 (穩定版)", layout="wide")
 
-# 您最新的 Token
+# 您目前的 Token
 TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMyAxMDo0NzozMyIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjYwLjI0OS4xMzYuMzcifQ.AyKn8RjaIoDUU9iPCiM9mF-EV5b8Kmn4qqkzvCSKPZ4"
 
-st.title("🧪 API 權限深度診斷工具")
-st.write("本工具將測試您的 Token 實際可存取的資料層級。")
+# --- 1. 功能函數 ---
 
-def test_api_permission(dataset, data_id):
+def get_price_only(stock_id):
+    """測試您的 Token 唯一能抓到的資料：股價"""
     url = "https://api.finmindtrade.com/api/v4/data"
     params = {
-        "dataset": dataset,
-        "data_id": data_id,
-        "start_date": (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d'),
+        "dataset": "TaiwanStockPrice",
+        "data_id": stock_id,
+        "start_date": (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d'),
         "token": TOKEN
     }
-    try:
-        res = requests.get(url, params=params, timeout=10)
-        return res.status_code, res.json()
-    except Exception as e:
-        return 999, str(e)
+    res = requests.get(url, params=params)
+    if res.status_code == 200:
+        return pd.DataFrame(res.json()['data'])
+    return None
 
-if st.button("🔍 開始權限檢測 (測試三種資料層級)"):
-    
-    # 層級 1: 基礎資料 (門檻最低)
-    st.subheader("層級 1：基礎股價 (TaiwanStockPrice)")
-    code1, res1 = test_api_permission("TaiwanStockPrice", "2330")
-    if code1 == 200 and res1.get("data"):
-        st.success("✅ 基礎權限：正常")
-    else:
-        st.error(f"❌ 基礎權限失敗：HTTP {code1}")
-        st.json(res1)
+def show_auth_guide():
+    """權限引導美化版"""
+    st.warning("🏮 **偵測到權限限制 (HTTP 422)**")
+    st.markdown("""
+    目前的帳號無法存取「分點資料」。請嘗試以下步驟：
+    1. 前往 **[FinMind 官網](https://finmindtrade.com/)** 登入。
+    2. 檢查 **個人積分** 是否大於 0。
+    3. 若您剛註冊，請完成 Email 驗證。
+    """)
+    if st.button("查看模擬範例 (Demo Mode)"):
+        demo_data = pd.DataFrame({
+            '股票代號': ['2330', '2317', '2454'],
+            '股票名稱': ['台積電', '鴻海', '聯發科'],
+            '預估買超(張)': [1250.5, 840.2, -310.4]
+        })
+        st.write("### 💡 預期產出畫面：")
+        st.table(demo_data)
 
-    # 層級 2: 法人籌碼 (中等門檻)
-    st.subheader("層級 2：法人動態 (InstitutionalInvestorsBuySell)")
-    code2, res2 = test_api_permission("InstitutionalInvestorsBuySell", "2330")
-    if code2 == 200 and res2.get("data"):
-        st.success("✅ 法人權限：正常")
-    else:
-        st.warning(f"⚠️ 法人權限受限：HTTP {code2}")
-        st.write("原因：您的帳號積分可能不足，或 Token 需重新產生。")
+# --- 2. 介面 ---
 
-    # 層級 3: 分點資料 (最高門檻)
-    st.subheader("層級 3：分點明細 (TaiwanStockBrokerPivots)")
-    code3, res3 = test_api_permission("TaiwanStockBrokerPivots", "9268")
-    if code3 == 200 and res3.get("data"):
-        st.success("✅ 分點權限：正常")
-    else:
-        st.error(f"🚫 分點權限拒絕：HTTP {code3}")
-        st.write("這就是導致您先前 422 錯誤的主因。")
+st.title("🛡️ 台股籌碼觀察站")
+st.divider()
+
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader("⚙️ 掃描設定")
+    stock_id = st.text_input("輸入代號測試連線 (如: 2330)", value="2330")
+    run_test = st.button("🚀 執行連線測試")
+
+with col2:
+    if run_test:
+        with st.spinner('連線中...'):
+            # 先試基礎資料
+            price_df = get_price_only(stock_id)
+            if price_df is not None and not price_df.empty:
+                st.success(f"✅ 連線正常！{stock_id} 近期股價已收錄")
+                st.line_chart(price_df.set_index('date')['close'])
+                
+                # 提示籌碼權限
+                st.error("❌ 籌碼進階數據存取失敗")
+                show_auth_guide()
+            else:
+                st.error("Token 已過期或帳號被暫時鎖定，請更換新 Token。")
 
 st.divider()
-st.write("💡 **後續行動建議**：")
-st.write("1. 如果連『層級 1』都失敗，代表該 Token 已被伺服器封鎖，請去 FinMind 官網登出再登入，重新產生一個。")
-st.write("2. 如果只有『層級 3』失敗，代表您的帳號等級目前無法存取分點資料。")
+st.caption("備註：若層級 1 正常但仍無法看分點，請至官網確認您的帳號是否具備進階 API 權限。")
