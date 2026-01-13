@@ -4,83 +4,78 @@ import requests
 from datetime import datetime, timedelta
 
 # --- 0. 基礎設定 ---
-st.set_page_config(page_title="台股籌碼觀察站", layout="wide")
+st.set_page_config(page_title="台股籌碼觀察站 (穩定法人版)", layout="wide")
 
 # 您提供的有效 Token
 FINMIND_TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMyAxMDo0NzozMyIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjYwLjI0OS4xMzYuMzcifQ.AyKn8RjaIoDUU9iPCiM9mF-EV5b8Kmn4qqkzvCSKPZ4"
 
-def get_data_direct(broker_id):
+def get_institutional_data(stock_id):
     """
-    極簡連線邏輯，針對 422 錯誤進行區間壓縮
+    抓取三大法人買賣超，避開分點資料的 422 權限限制
     """
     url = "https://api.finmindtrade.com/api/v4/data"
     
-    # 策略：將搜尋區間壓縮至極短的 7 天，以避開 422 權限限制
+    # 搜尋最近 10 天
     end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=10)).strftime('%Y-%m-%d')
     
     params = {
-        "dataset": "TaiwanStockBrokerPivots",
-        "data_id": str(broker_id),
+        "dataset": "InstitutionalInvestorsBuySell",
+        "data_id": str(stock_id),
         "start_date": start_date,
         "end_date": end_date,
         "token": FINMIND_TOKEN
     }
 
     try:
-        # 加入擬人化 Headers
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, params=params, headers=headers, timeout=15)
-        
-        # 深度診斷 422 錯誤
-        if response.status_code == 422:
-            return None, "權限/參數限制 (422)。建議：1. 稍後再試 2. 登入 FinMind 確認 Token 權限是否包含分點數據。"
-        
-        if response.status_code != 200:
-            return None, f"連線異常: {response.status_code}"
+        res = requests.get(url, params=params, timeout=15)
+        if res.status_code != 200:
+            return None, f"連線錯誤: {res.status_code}"
             
-        data = response.json().get("data", [])
+        data = res.json().get("data", [])
         if not data:
-            return None, "區間內無交易數據 (請確認今日是否已收盤或交易所已公布資料)。"
+            return None, "查無此標的近期法人資料。"
             
         df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date'])
         
-        # 只取最後一天的資料
-        last_date = df['date'].max()
-        df_last = df[df['date'] == last_date].copy()
+        # 整理數據：將不同法人的買賣超彙整
+        latest_date = df['date'].max()
+        df_latest = df[df['date'] == latest_date].copy()
         
-        # 數值校正
-        df_last['buy'] = pd.to_numeric(df_last['buy'], errors='coerce').fillna(0)
-        df_last['sell'] = pd.to_numeric(df_last['sell'], errors='coerce').fillna(0)
-        df_last['買超(張)'] = (df_last['buy'] - df_last['sell']) / 1000
-        
-        return df_last[df_last['買超(張)'] != 0].sort_values("買超(張)", ascending=False), last_date.strftime('%Y-%m-%d')
+        return df_latest, latest_date.strftime('%Y-%m-%d')
         
     except Exception as e:
-        return None, f"系統報錯: {str(e)}"
+        return None, f"異常: {str(e)}"
 
 # --- 1. 使用者介面 ---
 
-st.title("🛡️ 台股籌碼觀察站 (穩定連線版)")
-st.info("系統已針對 422 錯誤優化搜尋路徑。")
+st.title("🛡️ 台股籌碼觀察站 (法人動態版)")
+st.info("由於分點資料權限受限 (422)，本版改由追蹤『三大法人』資金流向。")
 
-broker_dict = {
-    "9268 凱基-台北": "9268",
-    "9264 凱基-松山": "9264",
-    "1470 摩根斯坦利": "1470",
-    "8440 摩根大通": "8440"
+# 提供熱門標的供測試
+test_stocks = {
+    "2330 台積電": "2330",
+    "2317 鴻海": "2317",
+    "2454 聯發科": "2454",
+    "2603 長榮": "2603"
 }
 
-target = st.selectbox("🎯 選擇追蹤分點：", list(broker_dict.keys()))
+target_stock = st.selectbox("🎯 選擇追蹤標的：", list(test_stocks.keys()))
 
-if st.button("🚀 開始掃描", use_container_width=True):
-    with st.spinner('連線中...'):
-        result, info = get_data_direct(broker_dict[target])
+if st.button("🚀 開始掃描籌碼", use_container_width=True):
+    with st.spinner('連線伺服器中...'):
+        result, info = get_institutional_data(test_stocks[target_stock])
         
         if result is not None:
-            st.success(f"✅ 讀取成功！日期：{info}")
-            st.dataframe(result[['stock_id', '買超(張)']].rename(columns={'stock_id':'股票代號'}), use_container_width=True, hide_index=True)
+            st.success(f"✅ 讀取成功！資料日期：{info}")
+            
+            # 整理輸出表格
+            final_df = result[['name', 'buy', 'sell']].copy()
+            final_df['買超(張)'] = (pd.to_numeric(final_df['buy']) - pd.to_numeric(final_df['sell'])) / 1000
+            
+            st.table(final_df[['name', '買超(張)']].rename(columns={'name':'法人名稱'}))
         else:
             st.error("❌ 讀取失敗")
             st.warning(f"診斷訊息：{info}")
+            st.info("💡 建議：若仍出現錯誤，代表您的 Token 在此時段呼叫頻率已達上限。")
