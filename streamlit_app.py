@@ -1,48 +1,57 @@
 import streamlit as st
 import pandas as pd
 import requests
+from datetime import datetime, timedelta
 
-st.set_page_config(page_title="台股籌碼分析工具 (權限解鎖版)", layout="wide")
+st.set_page_config(page_title="台股籌碼觀察站 (免 Token 版)", layout="wide")
 
-# 您驗證成功的 Token
-TOKEN = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJkYXRlIjoiMjAyNi0wMS0xMyAxMDo0NzozMyIsInVzZXJfaWQiOiJpc2NldG11c3AiLCJlbWFpbCI6ImlzY2V0bXVzcEBnbWFpbC5jb20iLCJpcCI6IjYwLjI0OS4xMzYuMzcifQ.AyKn8RjaIoDUU9iPCiM9mF-EV5b8Kmn4qqkzvCSKPZ4"
-
-def safe_api_call(dataset, data_id):
-    url = "https://api.finmindtrade.com/api/v4/data"
-    params = {"dataset": dataset, "data_id": data_id, "token": TOKEN}
+def get_twse_institutional_investors(target_date):
+    """直接從證交所官網抓取三大法人買賣超彙總"""
+    date_str = target_date.strftime("%Y%m%d")
+    url = f"https://www.twse.com.tw/zh/api/trading/fund/BFI82U?date={date_str}&response=json"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
+    
     try:
-        res = requests.get(url, params=params, timeout=10)
-        return res.status_code, res.json()
-    except:
-        return 999, None
-
-st.title("🏹 台股籌碼數據掃描器")
-st.sidebar.header("📊 參數設定")
-stock_id = st.sidebar.text_input("股票代號", value="2330")
-
-if st.sidebar.button("🔍 執行深度分析"):
-    with st.spinner('連線中...'):
-        # 1. 抓取股價 (基礎權限測試)
-        p_code, p_data = safe_api_call("TaiwanStockPrice", stock_id)
+        res = requests.get(url, headers=headers, timeout=10)
+        data = res.json()
         
-        if p_code == 200:
-            st.success(f"📈 {stock_id} 基礎連線正常")
-            df_price = pd.DataFrame(p_data['data'])
-            st.line_chart(df_price.set_index('date')['close'])
-            
-            # 2. 抓取分點 (高階權限測試)
-            b_code, b_data = safe_api_call("TaiwanStockBrokerPivots", "9268") # 凱基-台北
-            
-            if b_code == 200:
-                st.subheader("🎯 知名分點買賣明細")
-                st.dataframe(pd.DataFrame(b_data['data']), use_container_width=True)
-            elif b_code == 422:
-                st.error("🏮 籌碼權限受限 (HTTP 422)")
-                st.info("💡 **解決方案**：請至 FinMind 官網「簽到」領取點數，或完成 Email 驗證即可解鎖分點數據。")
-            else:
-                st.warning(f"分點資料暫時無法讀取 (錯誤碼: {b_code})")
+        if data.get("stat") == "OK":
+            # 整理成 DataFrame
+            df = pd.DataFrame(data["data"], columns=data["fields"])
+            return df, data["title"]
         else:
-            st.error("Token 目前無法使用，請至 FinMind 重新產生。")
+            return None, "當日非交易日或資料尚未更新"
+    except Exception as e:
+        return None, f"連線失敗: {str(e)}"
+
+# --- 介面設計 ---
+st.title("🛡️ 台股籌碼觀察站 (官方直接連線)")
+st.info("本頁面數據直接連線『台灣證券交易所』，不需 FinMind Token，無積分限制。")
+
+# 選擇日期 (預設昨天，因為今天可能還沒收盤)
+query_date = st.date_input("選擇查詢日期", datetime.now() - timedelta(days=1))
+
+if st.button("🚀 抓取官方法人數據", use_container_width=True):
+    with st.spinner('正在從證交所下載資料...'):
+        df, msg = get_twse_institutional_investors(query_date)
+        
+        if df is not None:
+            st.success(f"✅ {msg}")
+            
+            # 美化表格
+            st.dataframe(df, use_container_width=True, hide_index=True)
+            
+            # 簡單分析
+            st.write("### 💡 快速解讀")
+            # 假設最後一欄是買賣差額
+            total_diff = df.iloc[-1, -1]
+            st.metric("市場總買賣超差額", total_diff)
+        else:
+            st.error(f"❌ 無法讀取：{msg}")
+            st.warning("提示：台股收盤資料通常在 15:00 後更新，週六日不開盤。")
 
 st.divider()
-st.caption("備註：若股價圖有出來但分點失敗，即代表您的 Token 配置正確，僅需充值帳號點數。")
+st.caption("數據來源：臺灣證券交易所 (TWSE) 公開資料查詢系統")
