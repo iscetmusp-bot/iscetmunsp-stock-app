@@ -8,7 +8,7 @@ st.set_page_config(page_title="台股籌碼穿透版", layout="wide")
 
 # ⚠️ 請在此處貼上您剛剛產生的「全新 ID」網址
 # 網址範例：https://script.google.com/macros/s/ABCDEFG.../exec
-GAS_URL = "https://script.google.com/macros/s/AKfycbxxpquBQIW4Zd_C-Mtw3C7F0OXRMGF2zasOzqBw9mDyrUzSwDVxSsA18zMklRMsbaLdbg/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbxodb4qShiEsob_PREnD47e9TFLitQ9fJXuFUeiGNUgxo5zp-IjAoXmgYQMQS4AKs8qPQ/exec"
 
 def fetch_twse_data(target_date):
     date_str = target_date.strftime("%Y%m%d")
